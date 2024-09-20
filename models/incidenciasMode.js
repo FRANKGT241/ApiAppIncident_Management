@@ -1,7 +1,11 @@
-import { DataTypes } from 'sequelize';
+// models/incidenciasMode.js
+import { Model, DataTypes } from 'sequelize';
 import sequelize from '../database.js';
+import Fotografia from './fotografiaIncidenciaModel.js';
 
-const Incidencia = sequelize.define('incidencia', {
+class Incidencia extends Model {}
+
+Incidencia.init({
     id_incidencia: {
         type: DataTypes.INTEGER,
         autoIncrement: true,
@@ -13,7 +17,7 @@ const Incidencia = sequelize.define('incidencia', {
     },
     id_edificio: {
         type: DataTypes.INTEGER,
-        allowNull: falsea
+        allowNull: false
     },
     descripcion_incidencia: {
         type: DataTypes.TEXT,
@@ -32,8 +36,12 @@ const Incidencia = sequelize.define('incidencia', {
         allowNull: false
     }
 }, {
-    timestamps: false,
-    tableName: 'incidencias'
+    sequelize,
+    modelName: 'Incidencia',
+    tableName: 'incidencias',
+    timestamps: false
 });
+
+
 
 export default Incidencia;

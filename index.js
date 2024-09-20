@@ -6,7 +6,7 @@ import tipoMantenimientoRoutes from './routes/tipoMantenimientoRoutes.js';
 import tipoIncidenciaRoutes from './routes/tipoIncidenciaRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import usuarioRoutes from './routes/usuariosRoutes.js';
-import incidenciaRoutes from './routes/incidenciaRoutes.js'; 
+import incidenciaRoutes from './routes/incidenciasRoutes.js'; 
 
 const app = express();
 app.use(cors());

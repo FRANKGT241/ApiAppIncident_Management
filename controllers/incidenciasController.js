@@ -1,34 +1,81 @@
 // controllers/incidenciaController.js
-import Incidencia from '../models/incidencia.js';
-import Fotografia from '../models/fotografia_incidencia.js';
+import Incidencia from '../models/incidenciasMode.js';
+import Fotografia from '../models/fotografiaIncidenciaModel.js';
 import sequelize from '../database.js';
-import fs from 'fs-extra';
+import fs from 'fs';
 import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
 
-// Función para crear una incidencia
+/**
+ * Función auxiliar para guardar una imagen en el sistema de archivos.
+ * Recibe una cadena base64 y retorna el nombre del archivo guardado.
+ */
+const guardarImagen = (base64String, extension = 'png') => {
+    // Decodificar la cadena base64
+    const buffer = Buffer.from(base64String, 'base64');
+
+    // Generar un nombre único para el archivo
+    const filename = `${uuidv4()}.${extension}`; // Ajusta la extensión según el tipo de imagen
+
+    // Ruta completa donde se guardará la imagen
+    const filepath = path.join(process.cwd(), 'src', 'images', filename); // Asegúrate de que esta ruta exista
+
+    // Guardar el archivo en el sistema de archivos
+    fs.writeFileSync(filepath, buffer);
+
+    return filename;
+};
+
+/**
+ * Crear una nueva incidencia con múltiples fotografías.
+ */
 export const crearIncidencia = async (req, res) => {
-    const { id_edificio, descripcion_incidencia, fecha_incidencia, id_usuario, tipo_incidencia_id_incidencia } = req.body;
-    const fotografias = req.files; // Imágenes cargadas por Multer
+    const { id_edificio, descripcion_incidencia, fecha_incidencia, id_usuario, tipo_incidencia_id_incidencia, fotografias } = req.body;
 
-    // Validación básica
+    // Validaciones de campos requeridos
     if (!id_edificio || !descripcion_incidencia || !fecha_incidencia || !id_usuario || !tipo_incidencia_id_incidencia) {
-        // Eliminar archivos cargados si la validación falla
-        if (fotografias && fotografias.length > 0) {
-            fotografias.forEach(file => fs.unlink(file.path));
-        }
         return res.status(400).json({ error: 'Faltan campos requeridos.' });
     }
 
-    // 'fotografias' debe ser un array de archivos
-    if (!fotografias || fotografias.length === 0) {
+    // Validar que 'fotografias' sea un array y contenga al menos una imagen
+    if (!Array.isArray(fotografias) || fotografias.length === 0) {
         return res.status(400).json({ error: 'Se requiere al menos una fotografía.' });
     }
 
+    // Iniciar una transacción
     const transaction = await sequelize.transaction();
 
     try {
-        // Crear la incidencia
-        const nuevaIncidencia = await Incidencia.create({
+        // Procesar y guardar todas las fotografías
+        const fotosJSON = []; // Arreglo para almacenar { foto: filename, fecha_incidencia: date }
+
+        for (const fotoData of fotografias) {
+            // Validar que cada fotografía contenga 'foto' y 'fecha_incidencia'
+            if (!fotoData || !fotoData.foto || !fotoData.fecha_incidencia) {
+                throw new Error('Cada fotografía debe contener "foto" y "fecha_incidencia".');
+            }
+
+            // Opcional: Determinar la extensión de la imagen si es posible
+            const extension = 'png'; // Puedes ajustar esto dinámicamente si conoces el tipo de imagen
+
+            // Guardar la imagen en el sistema de archivos y obtener el nombre del archivo
+            const filename = guardarImagen(fotoData.foto, extension);
+
+            // Agregar al arreglo JSON
+            fotosJSON.push({
+                foto: filename
+            });
+        }
+
+        // Crear un único registro en fotografia_incidencia con todas las fotografías
+        const nuevaFotografia = await Fotografia.create({
+            foto: fotosJSON, // Almacena el arreglo de fotos en el campo JSON
+            fecha_incidencia: new Date(), // Puedes ajustar esta fecha según tu lógica
+        }, { transaction });
+
+        // Crear la incidencia asociándola con el id_fotografia
+        await Incidencia.create({
+            id_fotografia: nuevaFotografia.id_fotografia,
             id_edificio,
             descripcion_incidencia,
             fecha_incidencia,
@@ -36,273 +83,151 @@ export const crearIncidencia = async (req, res) => {
             tipo_incidencia_id_incidencia
         }, { transaction });
 
-        // Crear las fotografías asociadas
-        const fotografiasCreadas = await Promise.all(fotografias.map(async (file) => {
-            const fotografia = await Fotografia.create({
-                path_foto: file.path, // Almacenar la ruta del archivo
-                fecha_incidencia: fecha_incidencia, // Puedes ajustar esto según tus necesidades
-                id_incidencia: nuevaIncidencia.id_incidencia
-            }, { transaction });
-
-            return fotografia;
-        }));
-
+        // Confirmar la transacción
         await transaction.commit();
 
-        // Preparar la respuesta
-        const respuesta = {
-            id_incidencia: nuevaIncidencia.id_incidencia,
-            id_edificio: nuevaIncidencia.id_edificio,
-            descripcion_incidencia: nuevaIncidencia.descripcion_incidencia,
-            fecha_incidencia: nuevaIncidencia.fecha_incidencia,
-            id_usuario: nuevaIncidencia.id_usuario,
-            tipo_incidencia_id_incidencia: nuevaIncidencia.tipo_incidencia_id_incidencia,
-            fotografias: await Promise.all(fotografiasCreadas.map(async (foto) => {
-                // Leer el archivo y convertirlo a Base64
-                const filePath = path.resolve(foto.path_foto);
-                const fileData = await fs.readFile(filePath, { encoding: 'base64' });
-                const fileExt = path.extname(foto.path_foto).substring(1).toLowerCase(); // Obtener la extensión sin el punto y en minúsculas
-                const mimeType = fileExt === 'jpg' || fileExt === 'jpeg' ? 'image/jpeg' :
-                                 fileExt === 'png' ? 'image/png' :
-                                 fileExt === 'gif' ? 'image/gif' : 'application/octet-stream'; // Ajustar MIME type
-
-                return {
-                    id_fotografia: foto.id_fotografia,
-                    foto: `data:${mimeType};base64,${fileData}`,
-                    fecha_incidencia: foto.fecha_incidencia,
-                    id_incidencia: foto.id_incidencia
-                };
-            }))
-        };
-
-        return res.status(201).json(respuesta);
+        // Responder con éxito
+        return res.status(201).json({ message: 'Incidencia creada exitosamente.' });
     } catch (error) {
+        // Revertir la transacción en caso de error
         await transaction.rollback();
-
-        // Eliminar archivos cargados en caso de error
-        if (fotografias && fotografias.length > 0) {
-            fotografias.forEach(file => fs.unlink(file.path));
-        }
-
         console.error('Error al crear la incidencia:', error);
         return res.status(500).json({ error: 'Error al crear la incidencia.' });
     }
 };
 
-// Función para obtener todas las incidencias
+/**
+ * Obtener todas las incidencias junto con sus fotografías en base64.
+ */
 export const obtenerIncidencias = async (req, res) => {
     try {
-        const incidencias = await Incidencia.findAll({
-            include: [{
-                model: Fotografia,
-                as: 'fotografias_incidencia',
-            }]
-        });
+        // Obtener todas las incidencias con sus fotografías
+        const incidencias = await Incidencia.findAll();
 
-        // Convertir cada incidencia y sus fotografías
-        const respuesta = await Promise.all(incidencias.map(async (incidencia) => {
-            const fotografias = await Promise.all(incidencia.fotografias_incidencia.map(async (foto) => {
-                const filePath = path.resolve(foto.path_foto);
-                // Verificar si el archivo existe
-                const exists = await fs.pathExists(filePath);
-                if (!exists) {
-                    return {
-                        id_fotografia: foto.id_fotografia,
-                        foto: null, // Indicar que la imagen no está disponible
-                        fecha_incidencia: foto.fecha_incidencia,
-                        id_incidencia: foto.id_incidencia
-                    };
-                }
-
-                const fileData = await fs.readFile(filePath, { encoding: 'base64' });
-                const fileExt = path.extname(foto.path_foto).substring(1).toLowerCase();
-                const mimeType = fileExt === 'jpg' || fileExt === 'jpeg' ? 'image/jpeg' :
-                                 fileExt === 'png' ? 'image/png' :
-                                 fileExt === 'gif' ? 'image/gif' : 'application/octet-stream';
-
-                return {
-                    id_fotografia: foto.id_fotografia,
-                    foto: `data:${mimeType};base64,${fileData}`,
-                    fecha_incidencia: foto.fecha_incidencia,
-                    id_incidencia: foto.id_incidencia
-                };
-            }));
-
-            return {
-                id_incidencia: incidencia.id_incidencia,
-                id_edificio: incidencia.id_edificio,
-                descripcion_incidencia: incidencia.descripcion_incidencia,
-                fecha_incidencia: incidencia.fecha_incidencia,
-                id_usuario: incidencia.id_usuario,
-                tipo_incidencia_id_incidencia: incidencia.tipo_incidencia_id_incidencia,
-                fotografias: fotografias
-            };
+        // Mapear las incidencias para incluir las fotografías en base64
+        const resultados = incidencias.map(incidencia => ({
+            id_incidencia: incidencia.id_incidencia,
+            id_edificio: incidencia.id_edificio,
+            descripcion_incidencia: incidencia.descripcion_incidencia,
+            fecha_incidencia: incidencia.fecha_incidencia,
+            id_usuario: incidencia.id_usuario,
+            tipo_incidencia_id_incidencia: incidencia.tipo_incidencia_id_incidencia
         }));
 
-        return res.status(200).json(respuesta);
+        return res.status(200).json(resultados);
     } catch (error) {
         console.error('Error al obtener las incidencias:', error);
         return res.status(500).json({ error: 'Error al obtener las incidencias.' });
     }
 };
 
-// Función para obtener una incidencia por ID
+/**
+ * Obtener una incidencia específica por su ID junto con sus fotografías en base64.
+ */
 export const obtenerIncidenciaPorId = async (req, res) => {
     const { id } = req.params;
 
     try {
-        const incidencia = await Incidencia.findByPk(id, {
-            include: [{
-                model: Fotografia,
-                as: 'fotografias_incidencia',
-            }]
-        });
+        // Obtener la incidencia por ID con sus fotografías
+        const incidencia = await Incidencia.findByPk(id);
 
         if (!incidencia) {
             return res.status(404).json({ error: 'Incidencia no encontrada.' });
         }
 
-        const fotografias = await Promise.all(incidencia.fotografias_incidencia.map(async (foto) => {
-            const filePath = path.resolve(foto.path_foto);
-            // Verificar si el archivo existe
-            const exists = await fs.pathExists(filePath);
-            if (!exists) {
-                return {
-                    id_fotografia: foto.id_fotografia,
-                    foto: null,
-                    fecha_incidencia: foto.fecha_incidencia,
-                    id_incidencia: foto.id_incidencia
-                };
-            }
+  
 
-            const fileData = await fs.readFile(filePath, { encoding: 'base64' });
-            const fileExt = path.extname(foto.path_foto).substring(1).toLowerCase();
-            const mimeType = fileExt === 'jpg' || fileExt === 'jpeg' ? 'image/jpeg' :
-                             fileExt === 'png' ? 'image/png' :
-                             fileExt === 'gif' ? 'image/gif' : 'application/octet-stream';
-
-            return {
-                id_fotografia: foto.id_fotografia,
-                foto: `data:${mimeType};base64,${fileData}`,
-                fecha_incidencia: foto.fecha_incidencia,
-                id_incidencia: foto.id_incidencia
-            };
-        }));
-
-        const respuesta = {
+        // Preparar la respuesta
+        const resultado = {
             id_incidencia: incidencia.id_incidencia,
             id_edificio: incidencia.id_edificio,
             descripcion_incidencia: incidencia.descripcion_incidencia,
             fecha_incidencia: incidencia.fecha_incidencia,
             id_usuario: incidencia.id_usuario,
-            tipo_incidencia_id_incidencia: incidencia.tipo_incidencia_id_incidencia,
-            fotografias: fotografias
+            tipo_incidencia_id_incidencia: incidencia.tipo_incidencia_id_incidencia
         };
 
-        return res.status(200).json(respuesta);
+        return res.status(200).json(resultado);
     } catch (error) {
         console.error('Error al obtener la incidencia:', error);
         return res.status(500).json({ error: 'Error al obtener la incidencia.' });
     }
 };
 
-// Función para actualizar una incidencia
+/**
+ * Actualizar una incidencia específica por su ID junto con sus fotografías.
+ * Permite agregar nuevas fotografías o eliminar existentes.
+ */
 export const actualizarIncidencia = async (req, res) => {
     const { id } = req.params;
-    const { id_edificio, descripcion_incidencia, fecha_incidencia, id_usuario, tipo_incidencia_id_incidencia, eliminar_fotografias } = req.body;
-    const nuevasFotografias = req.files; // Nuevas imágenes cargadas por Multer
+    const { id_edificio, descripcion_incidencia, fecha_incidencia, id_usuario, tipo_incidencia_id_incidencia, fotografias } = req.body;
 
     const transaction = await sequelize.transaction();
 
     try {
-        // Buscar la incidencia a actualizar
+        // Encontrar la incidencia a actualizar
         const incidencia = await Incidencia.findByPk(id, {
-            include: [{
-                model: Fotografia,
-                as: 'fotografias_incidencia',
-            }]
+            include: [{ model: Fotografia, as: 'fotografias' }],
+            transaction
         });
 
         if (!incidencia) {
-            // Eliminar nuevas imágenes cargadas si la incidencia no existe
-            if (nuevasFotografias && nuevasFotografias.length > 0) {
-                nuevasFotografias.forEach(file => fs.unlink(file.path));
-            }
+            await transaction.rollback();
             return res.status(404).json({ error: 'Incidencia no encontrada.' });
         }
 
-        // Actualizar los campos de la incidencia
-        incidencia.id_edificio = id_edificio !== undefined ? id_edificio : incidencia.id_edificio;
-        incidencia.descripcion_incidencia = descripcion_incidencia !== undefined ? descripcion_incidencia : incidencia.descripcion_incidencia;
-        incidencia.fecha_incidencia = fecha_incidencia !== undefined ? fecha_incidencia : incidencia.fecha_incidencia;
-        incidencia.id_usuario = id_usuario !== undefined ? id_usuario : incidencia.id_usuario;
-        incidencia.tipo_incidencia_id_incidencia = tipo_incidencia_id_incidencia !== undefined ? tipo_incidencia_id_incidencia : incidencia.tipo_incidencia_id_incidencia;
+        // Actualizar los campos de la incidencia si se proporcionan
+        await incidencia.update({
+            id_edificio: id_edificio !== undefined ? id_edificio : incidencia.id_edificio,
+            descripcion_incidencia: descripcion_incidencia !== undefined ? descripcion_incidencia : incidencia.descripcion_incidencia,
+            fecha_incidencia: fecha_incidencia !== undefined ? fecha_incidencia : incidencia.fecha_incidencia,
+            id_usuario: id_usuario !== undefined ? id_usuario : incidencia.id_usuario,
+            tipo_incidencia_id_incidencia: tipo_incidencia_id_incidencia !== undefined ? tipo_incidencia_id_incidencia : incidencia.tipo_incidencia_id_incidencia
+        }, { transaction });
 
-        await incidencia.save({ transaction });
+        // Obtener el registro de fotografia_incidencia asociado
+        const fotografia = incidencia.fotografias;
 
-        // Eliminar fotografías si se especifica
-        if (eliminar_fotografias && Array.isArray(eliminar_fotografias)) {
-            for (const fotoId of eliminar_fotografias) {
-                const foto = await Fotografia.findOne({ where: { id_fotografia: fotoId, id_incidencia: id } });
-                if (foto) {
-                    // Eliminar el archivo físico
-                    const filePath = path.resolve(foto.path_foto);
-                    const exists = await fs.pathExists(filePath);
-                    if (exists) {
-                        await fs.unlink(filePath);
+        if (fotografia && fotografias && Array.isArray(fotografias)) {
+            // Procesar cada acción en las fotografías
+            for (const fotoAction of fotografias) {
+                if (fotoAction.eliminar) {
+                    // Eliminar una fotografía existente
+                    const index = fotografia.foto.findIndex(f => f.foto === fotoAction.foto);
+                    if (index !== -1) {
+                        const filename = fotografia.foto[index].foto;
+                        const filepath = path.join(process.cwd(), 'src', 'images', filename);
+                        if (fs.existsSync(filepath)) {
+                            fs.unlinkSync(filepath);
+                        }
+                        // Remover de la lista
+                        fotografia.foto.splice(index, 1);
                     }
-                    // Eliminar el registro de la base de datos
-                    await foto.destroy({ transaction });
+                } else if (fotoAction.foto && fotoAction.fecha_incidencia) {
+                    // Agregar una nueva fotografía
+                    const extension = 'png'; // Ajusta esto dinámicamente si conoces el tipo de imagen
+                    const filename = guardarImagen(fotoAction.foto, extension);
+                    fotografia.foto.push({
+                        foto: filename,
+                        fecha_incidencia: fotoAction.fecha_incidencia
+                    });
                 }
+                // Puedes agregar lógica adicional para actualizar fechas de fotografías existentes si es necesario
             }
-        }
 
-        // Agregar nuevas fotografías si se cargaron
-        let fotografiasCreadas = [];
-        if (nuevasFotografias && nuevasFotografias.length > 0) {
-            fotografiasCreadas = await Promise.all(nuevasFotografias.map(async (file) => {
-                const fotografia = await Fotografia.create({
-                    path_foto: file.path,
-                    fecha_incidencia: fecha_incidencia || new Date(),
-                    id_incidencia: id
-                }, { transaction });
-
-                return fotografia;
-            }));
+            // Actualizar el registro de fotografia_incidencia
+            await fotografia.save({ transaction });
         }
 
         await transaction.commit();
 
-        // Preparar la respuesta actualizada
-        const todasFotografias = await Fotografia.findAll({ where: { id_incidencia: id } });
-
-        const fotografias = await Promise.all(todasFotografias.map(async (foto) => {
-            const filePath = path.resolve(foto.path_foto);
-            // Verificar si el archivo existe
-            const exists = await fs.pathExists(filePath);
-            if (!exists) {
-                return {
-                    id_fotografia: foto.id_fotografia,
-                    foto: null,
-                    fecha_incidencia: foto.fecha_incidencia,
-                    id_incidencia: foto.id_incidencia
-                };
-            }
-
-            const fileData = await fs.readFile(filePath, { encoding: 'base64' });
-            const fileExt = path.extname(foto.path_foto).substring(1).toLowerCase();
-            const mimeType = fileExt === 'jpg' || fileExt === 'jpeg' ? 'image/jpeg' :
-                             fileExt === 'png' ? 'image/png' :
-                             fileExt === 'gif' ? 'image/gif' : 'application/octet-stream';
-
-            return {
-                id_fotografia: foto.id_fotografia,
-                foto: `data:${mimeType};base64,${fileData}`,
-                fecha_incidencia: foto.fecha_incidencia,
-                id_incidencia: foto.id_incidencia
-            };
+        // Preparar las fotografías para la respuesta
+        const fotografiasGuardadas = fotografia.foto.map(foto => ({
+            foto: convertirImagenABase64(foto.foto),
+            fecha_incidencia: foto.fecha_incidencia
         }));
 
+        // Preparar la respuesta
         const respuesta = {
             id_incidencia: incidencia.id_incidencia,
             id_edificio: incidencia.id_edificio,
@@ -310,56 +235,56 @@ export const actualizarIncidencia = async (req, res) => {
             fecha_incidencia: incidencia.fecha_incidencia,
             id_usuario: incidencia.id_usuario,
             tipo_incidencia_id_incidencia: incidencia.tipo_incidencia_id_incidencia,
-            fotografias: fotografias
+            fotografias: fotografiasGuardadas
         };
 
         return res.status(200).json(respuesta);
     } catch (error) {
         await transaction.rollback();
-
-        // Eliminar nuevas imágenes cargadas en caso de error
-        if (nuevasFotografias && nuevasFotografias.length > 0) {
-            nuevasFotografias.forEach(file => fs.unlink(file.path));
-        }
-
         console.error('Error al actualizar la incidencia:', error);
         return res.status(500).json({ error: 'Error al actualizar la incidencia.' });
     }
 };
 
-// Función para eliminar una incidencia
+/**
+ * Eliminar una incidencia específica por su ID junto con sus fotografías.
+ */
 export const eliminarIncidencia = async (req, res) => {
     const { id } = req.params;
 
     const transaction = await sequelize.transaction();
 
     try {
+        // Encontrar la incidencia a eliminar con sus fotografías
         const incidencia = await Incidencia.findByPk(id, {
-            include: [{
-                model: Fotografia,
-                as: 'fotografias_incidencia',
-            }]
+            include: [{ model: Fotografia, as: 'fotografias' }],
+            transaction
         });
 
         if (!incidencia) {
+            await transaction.rollback();
             return res.status(404).json({ error: 'Incidencia no encontrada.' });
         }
 
-        // Eliminar todas las fotografías físicas asociadas
-        for (const foto of incidencia.fotografias_incidencia) {
-            const filePath = path.resolve(foto.path_foto);
-            const exists = await fs.pathExists(filePath);
-            if (exists) {
-                await fs.unlink(filePath);
+        // Eliminar todas las fotografías asociadas
+        if (incidencia.fotografias && incidencia.fotografias.foto.length > 0) {
+            for (const foto of incidencia.fotografias.foto) {
+                const filepath = path.join(process.cwd(), 'src', 'images', foto.foto);
+                if (fs.existsSync(filepath)) {
+                    fs.unlinkSync(filepath);
+                }
             }
         }
 
-        // Eliminar la incidencia (esto eliminará las fotografías en la base de datos debido a CASCADE)
+        // Eliminar el registro de fotografia_incidencia
+        await incidencia.fotografias.destroy({ transaction });
+
+        // Eliminar la incidencia
         await incidencia.destroy({ transaction });
 
         await transaction.commit();
 
-        return res.status(200).json({ message: 'Incidencia y fotografías eliminadas correctamente.' });
+        return res.status(200).json({ message: 'Incidencia y sus fotografías eliminadas correctamente.' });
     } catch (error) {
         await transaction.rollback();
         console.error('Error al eliminar la incidencia:', error);
