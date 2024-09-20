@@ -13,7 +13,7 @@ const Incidencia = sequelize.define('incidencia', {
     },
     id_edificio: {
         type: DataTypes.INTEGER,
-        allowNull: false
+        allowNull: falsea
     },
     descripcion_incidencia: {
         type: DataTypes.TEXT,

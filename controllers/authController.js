@@ -2,7 +2,6 @@ import Usuario from '../models/usuarioMode.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
-
 export const login = async (req, res) => {
     try {
         const { nombre_usuario, contraseña } = req.body;

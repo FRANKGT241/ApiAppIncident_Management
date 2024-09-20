@@ -6,6 +6,7 @@ import tipoMantenimientoRoutes from './routes/tipoMantenimientoRoutes.js';
 import tipoIncidenciaRoutes from './routes/tipoIncidenciaRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import usuarioRoutes from './routes/usuariosRoutes.js';
+import incidenciaRoutes from './routes/incidenciaRoutes.js'; 
 
 const app = express();
 app.use(cors());
@@ -17,6 +18,7 @@ app.use('/api/tipos-mantenimiento', tipoMantenimientoRoutes);
 app.use('/api/tipos-incidencia', tipoIncidenciaRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/usuarios', usuarioRoutes);
+app.use('/api/incidencias', incidenciaRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
