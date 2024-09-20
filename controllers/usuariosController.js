@@ -47,7 +47,7 @@ export const crearUsuario = async (req, res) => {
 export const obtenerUsuarios = async (req, res) => {
     try {
         const usuarios = await Usuario.findAll({
-            attributes: { exclude: ['contraseña'] } // Excluir la contraseña de la respuesta
+            attributes: { exclude: ['contraseña'] } 
         });
         res.status(200).json(usuarios);
     } catch (error) {
