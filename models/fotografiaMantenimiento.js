@@ -9,7 +9,8 @@ const FotografiaMantenimiento = sequelize.define('fotografiaMantenimiento', {
     },
     foto: {
         type: DataTypes.JSON,
-        allowNull: false
+        allowNull: false,
+        defaultValue: []
     },
     fecha_fotografia: {
         type: DataTypes.DATE,
@@ -21,7 +22,7 @@ const FotografiaMantenimiento = sequelize.define('fotografiaMantenimiento', {
     }
 }, {
     timestamps: false,
-    tableName: 'fotografiasMantenimiento'
+    tableName: 'fotografia_mantenimiento'
 });
 
 export default FotografiaMantenimiento;

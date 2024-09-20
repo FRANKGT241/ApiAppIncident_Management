@@ -1,7 +1,6 @@
 // models/incidenciasMode.js
 import { Model, DataTypes } from 'sequelize';
 import sequelize from '../database.js';
-import Fotografia from './fotografiaIncidenciaModel.js';
 
 class Incidencia extends Model {}
 
