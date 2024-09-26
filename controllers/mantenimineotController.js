@@ -111,27 +111,88 @@ export const crearmantenimiento = async (req, res) => {
 /**
  * Obtener todas las mantenimientos junto con sus fotografías en base64.
  */
-export const obtenermantenimientos = async (req, res) => {
+export const obtenerMantenimientos = async (req, res) => {
     try {
-        // Obtener todas las mantenimientos con sus fotografías
-        const mantenimientos = await Mantenimiento.findAll();
+        // 1. Obtener todos los mantenimientos
+        const mantenimientos = await Mantenimiento.findAll({
+            attributes: [
+                'id_mantenimiento',
+                'id_edificio',
+                'descripcion_mantenimiento',
+                'fecha_mantenimiento',
+                'id_usuario',
+                'id_tipo_mantenimiento'
+            ]
+        });
 
-        // Mapear las mantenimientos para incluir las fotografías en base64
-        const resultados = mantenimientos.map(mantenimiento => ({
-            id_mantenimiento: mantenimiento.id_mantenimiento,
-            id_edificio: mantenimiento.id_edificio,
-            descripcion_mantenimiento: mantenimiento.descripcion_mantenimiento,
-            fecha_mantenimiento: mantenimiento.fecha_mantenimiento,
-            id_usuario: mantenimiento.id_usuario,
-            tipo_mantenimiento_id_mantenimiento: mantenimiento.tipo_mantenimiento_id_mantenimiento
-        }));
+        // 2. Extraer todos los id_mantenimiento de los mantenimientos
+        const idMantenimientos = mantenimientos
+            .map(mantenimiento => mantenimiento.id_mantenimiento)
+            .filter(id => id !== null && id !== undefined);
 
+        // 3. Verificar si hay mantenimientos
+        if (idMantenimientos.length === 0) {
+            return res.status(200).json([]); // No hay mantenimientos
+        }
+
+        // 4. Obtener todas las fotografías asociadas a los mantenimientos en una sola consulta
+        const fotos = await FotografiaMantenimiento.findAll({
+            where: {
+                id_mantenimiento: idMantenimientos
+            },
+            attributes: ['id_fotografia', 'foto', 'fecha_fotografia', 'id_mantenimiento']
+        });
+
+        // 5. Crear un mapa para asociar fotografías a cada mantenimiento
+        const mapaFotos = {};
+        fotos.forEach(foto => {
+            if (!mapaFotos[foto.id_mantenimiento]) {
+                mapaFotos[foto.id_mantenimiento] = [];
+            }
+
+            // Asumiendo que 'foto.foto' es un array de objetos o strings
+            if (Array.isArray(foto.foto)) {
+                foto.foto.forEach(f => {
+                    if (f.foto) {
+                        mapaFotos[foto.id_mantenimiento].push(f.foto);
+                    }
+                });
+            } else if (typeof foto.foto === 'string') {
+                mapaFotos[foto.id_mantenimiento].push(foto.foto);
+            }
+        });
+
+        // 6. Construir la base de la URL para las imágenes
+        const baseUrl = `${req.protocol}://${req.get('host')}/uploads`;
+
+        // 7. Mapear los mantenimientos para incluir las fotografías como URLs
+        const resultados = mantenimientos.map(mantenimiento => {
+            const fotosMantenimiento = mapaFotos[mantenimiento.id_mantenimiento] || [];
+
+            // Construir las URLs completas para cada fotografía
+            const urlsFotos = fotosMantenimiento.map(nombreFoto => {
+                return `${baseUrl}/${nombreFoto}`;
+            });
+
+            return {
+                id_mantenimiento: mantenimiento.id_mantenimiento,
+                id_edificio: mantenimiento.id_edificio,
+                descripcion_mantenimiento: mantenimiento.descripcion_mantenimiento,
+                fecha_mantenimiento: mantenimiento.fecha_mantenimiento,
+                id_usuario: mantenimiento.id_usuario,
+                tipo_mantenimiento_id_mantenimiento: mantenimiento.id_tipo_mantenimiento,
+                fotografias: urlsFotos // Array de URLs de las fotografías
+            };
+        });
+
+        // 8. Retornar los resultados
         return res.status(200).json(resultados);
     } catch (error) {
-        console.error('Error al obtener las mantenimientos:', error);
-        return res.status(500).json({ error: 'Error al obtener las mantenimientos.' });
+        console.error('Error al obtener los mantenimientos:', error);
+        return res.status(500).json({ error: 'Error al obtener los mantenimientos.' });
     }
 };
+
 
 
 
